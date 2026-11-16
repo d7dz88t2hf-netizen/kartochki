@@ -3,7 +3,7 @@
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const br = s => esc(s).replace(/\n/g, '<br>');
-const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const uid = Model.id;
 const MIN = 6e4, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const today = () => new Date().toLocaleDateString('sv');
 const plural = (n, [one, few, many]) => { const a = n % 10, b = n % 100; return `${n} ${a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many}`; };
@@ -35,13 +35,22 @@ const whenDue = c => c.state === 'new' ? 'новая' : c.due <= Date.now() ? '�
 /* ===== состояние и хранение ===== */
 const KEY = 'kartochki.v1';
 const S = { decks: {}, settings: { theme: 'light', newPerDay: 20 }, view: 'home', deckId: null, search: '', study: null };
-try { Object.assign(S, JSON.parse(localStorage.getItem(KEY)) || {}); } catch {}
-const fixCard = c => ({ freq: 1, state: 'new', due: 0, interval: 0, ease: 2.5, reps: 0, lapses: 0, step: 0, ...c });
-const fixDecks = () => Object.values(S.decks).forEach(d => (d.cards = d.cards.map(fixCard)));
-fixDecks();
+let cacheError = '';
+try {
+  const raw = localStorage.getItem(KEY);
+  if (raw) Object.assign(S, Model.decode(raw));
+} catch (e) { cacheError = 'Не удалось прочитать локальную копию: ' + e.message; }
+const fixCard = c => Model.card(c);
+const fixDecks = () => { const data = Model.collection(S); S.decks = data.decks; S.settings = data.settings; };
+const snapshot = () => JSON.stringify({ app: 'kartochki', version: 1, decks: S.decks, settings: S.settings });
+function saveStatus(text, error = false) {
+  const el = $('#saveStatus'); if (!el) return;
+  el.textContent = text; el.classList.toggle('save-error', error);
+}
 const save = () => {
-  try { localStorage.setItem(KEY, JSON.stringify({ decks: S.decks, settings: S.settings })); } catch { if (!window.afterSave) toast('Не удалось сохранить. Сделайте экспорт колод.'); }
-  window.afterSave?.(); // онлайн-версия дополнительно сохраняет в аккаунт
+  if (window.afterSave) return window.afterSave();
+  try { localStorage.setItem(KEY, snapshot()); saveStatus('Сохранено в браузере'); }
+  catch { saveStatus('Не сохранено — сделайте резервную копию', true); }
 };
 const deck = () => S.decks[S.deckId];
 
@@ -49,7 +58,7 @@ const deck = () => S.decks[S.deckId];
 function schedule(card, g, now = Date.now()) {
   const c = { ...card, reps: card.reps + 1, last: now }, f = c.freq;
   const learn = (ms, step) => Object.assign(c, { state: 'learn', step, due: now + ms });
-  const review = iv => Object.assign(c, { state: 'review', step: 0, interval: iv, due: now + iv * f * DAY });
+  const review = iv => { iv = Math.min(iv, 36500 / f); return Object.assign(c, { state: 'review', step: 0, interval: iv, due: now + iv * f * DAY }); };
   if (c.state !== 'review') {
     if (g === 'again') learn(MIN, 0);
     else if (g === 'hard') learn(6 * MIN, c.step);
@@ -60,7 +69,7 @@ function schedule(card, g, now = Date.now()) {
     if (g === 'again') { c.lapses++; c.ease = Math.max(1.3, c.ease - 0.2); c.interval = Math.max(1, iv / 2); learn(10 * MIN, 1); }
     else if (g === 'hard') { c.ease = Math.max(1.3, c.ease - 0.15); review(Math.max(iv * 1.2, iv + 0.5)); }
     else if (g === 'good') review(Math.max(iv + 1, iv * c.ease));
-    else { review(Math.max(iv + 2, iv * c.ease * 1.3)); c.ease += 0.15; }
+    else { review(Math.max(iv + 2, iv * c.ease * 1.3)); c.ease = Math.min(5, c.ease + 0.15); }
   }
   return c;
 }
@@ -107,10 +116,11 @@ function toast(msg) {
 }
 function modal(html, mount) {
   $('#modal').innerHTML = `<div class="overlay" data-act="overlay"><div class="modal" role="dialog" aria-modal="true">${html}</div></div>`;
-  $('#modal [autofocus]')?.focus();
+  modal.returnFocus ??= document.activeElement;
+  ($('#modal [autofocus]') || $('#modal button, #modal input, #modal textarea'))?.focus();
   mount?.($('#modal .modal'));
 }
-const close = () => ($('#modal').innerHTML = '');
+const close = () => { $('#modal').innerHTML = ''; modal.returnFocus?.focus(); modal.returnFocus = null; };
 const isModal = () => !!$('#modal').innerHTML;
 const cancelBtn = '<button class="btn plain" data-act="close">Отмена</button>';
 function ask(title, text, ok, fn) {
@@ -147,35 +157,41 @@ function todayLine(c) {
 }
 
 function viewHome() {
-  const list = Object.values(S.decks).sort((a, b) => a.created - b.created);
-  if (!list.length) return `<section class="intro">
+  const all = Object.values(S.decks).sort((a, b) => a.created - b.created);
+  const query = S.search.trim().toLowerCase();
+  const list = query ? all.filter(d => d.name.toLowerCase().includes(query) || d.cards.some(c => (c.front + ' ' + c.back).toLowerCase().includes(query))) : all;
+  const totals = all.reduce((t, d) => { const c = counts(d); t.cards += c.total; t.due += c.new + c.learn + c.rev; return t; }, { cards: 0, due: 0 });
+  if (!all.length) return `<section class="intro">
     <h2>Начните с первой колоды</h2>
     <p>Колода — набор карточек на одну тему: слова, термины, правила, номера деталей. На лицевой стороне вопрос, на обороте ответ. После каждого ответа вы решаете, когда увидеть карточку снова.</p>
     <div class="row"><button class="btn main" data-act="new-deck">Создать колоду</button><button class="btn" data-act="import">Загрузить файл</button><button class="btn plain" data-act="sample">Посмотреть на примере</button></div></section>`;
-  return `<div class="heading"><h2>Колоды</h2><span class="push"></span><button class="btn plain" data-act="import">Загрузить файл</button><button class="btn main" data-act="new-deck">Новая колода</button></div>
+  return `<div class="collection-stats" aria-label="Обзор коллекции"><div><strong>${all.length}</strong><span>Колоды</span></div><div><strong>${totals.cards}</strong><span>Карточки</span></div><div><strong>${totals.due}</strong><span>На сегодня</span></div></div>
+    <div class="heading"><h2>Колоды</h2><span class="push"></span><button class="btn plain" data-act="import">Загрузить файл</button><button class="btn main" data-act="new-deck">Новая колода</button></div>
+    <input type="search" id="search" value="${esc(S.search)}" placeholder="Найти колоду или карточку" aria-label="Поиск по коллекции">
+    ${!list.length ? '<p class="note">Ничего не найдено. Попробуйте другой запрос.</p>' : ''}
     <ul class="decks">${list.map(d => {
       const c = counts(d), todo = c.new + c.learn + c.rev;
-      return `<li class="deck" data-act="open" data-id="${d.id}"><div><h3>${esc(d.name)}</h3><p>${todayLine(c)}</p></div>
-        ${todo ? `<button class="btn main" data-act="study" data-id="${d.id}">Учить</button>` : ''}</li>`;
+      return `<li class="deck"><button class="deck-open" data-act="open" data-id="${esc(d.id)}"><h3>${esc(d.name)}</h3><span>${todayLine(c)}</span></button>
+        ${todo ? `<button class="btn main" data-act="study" data-id="${esc(d.id)}">Учить</button>` : ''}</li>`;
     }).join('')}</ul>`;
 }
 
 function viewDeck(d) {
   const c = counts(d), q = S.search.trim().toLowerCase();
   const found = q ? d.cards.filter(x => (x.front + ' ' + x.back).toLowerCase().includes(q)) : d.cards;
-  const rows = found.slice(0, 300).map(x => `<li>
+  const rows = found.slice(0, S.visibleCards || 300).map(x => `<li>
       <span class="clip" title="${esc(x.front)}">${esc(x.front)}</span><span class="clip soft hm" title="${esc(x.back)}">${esc(x.back)}</span>
       <span class="when hm">${freqName(x.freq)}</span>
-      <span class="acts"><button class="btn icon" data-act="edit" data-id="${x.id}" title="Изменить">${icon('pen')}</button><button class="btn icon" data-act="del-card" data-id="${x.id}" title="Удалить">${icon('trash')}</button></span></li>`).join('');
+      <span class="acts"><button class="btn icon" data-act="edit" data-id="${esc(x.id)}" title="Изменить">${icon('pen')}</button><button class="btn icon" data-act="del-card" data-id="${esc(x.id)}" title="Удалить">${icon('trash')}</button></span></li>`).join('');
   const todo = c.new + c.learn + c.rev;
   return `${backBtn('home', 'Все колоды')}
-    <div class="heading"><h2>${esc(d.name)}</h2><button class="btn icon" data-act="rename" title="Переименовать">${icon('pen')}</button><span class="push"></span>${todo ? `<button class="btn main" data-act="study" data-id="${d.id}">Учить</button>` : d.cards.length ? '<button class="btn" data-act="cram">Повторить всё</button>' : ''}</div>
+    <div class="heading"><h2>${esc(d.name)}</h2><button class="btn icon" data-act="rename" title="Переименовать">${icon('pen')}</button><span class="push"></span>${todo ? `<button class="btn main" data-act="study" data-id="${esc(d.id)}">Учить</button>` : d.cards.length ? '<button class="btn" data-act="cram">Повторить всё</button>' : ''}</div>
     <p class="summary">${d.cards.length ? `${plural(c.total, CARDS)}. Новых ${c.newAll}, в изучении ${c.learnAll}, ждут повторения ${c.rev + c.learn}.` : 'Пока пусто. Добавьте карточки вручную или загрузите файл.'}</p>
-    <div class="tools"><button class="btn" data-act="add">Добавить карточку</button><button class="btn" data-act="import" data-id="${d.id}">Загрузить файл</button>
+    <div class="tools"><button class="btn" data-act="add">Добавить карточку</button><button class="btn" data-act="import" data-id="${esc(d.id)}">Загрузить файл</button>
       ${d.cards.length ? '<button class="btn plain" data-act="export">Экспорт</button>' : ''}<button class="btn plain warn" data-act="del-deck">Удалить колоду</button></div>
     ${d.cards.length ? `<input type="search" id="search" placeholder="Найти карточку" value="${esc(S.search)}" aria-label="Поиск по карточкам">
       <ul class="cards">${rows || '<li class="note">Ничего не нашлось</li>'}
-      ${found.length > 300 ? `<li class="note">Показаны 300 из ${found.length}. Уточните поиск.</li>` : ''}</ul>` : ''}`;
+      ${found.length > (S.visibleCards || 300) ? `<li class="note"><button class="btn" data-act="more-cards">Показать ещё (${found.length - (S.visibleCards || 300)})</button></li>` : ''}</ul>` : ''}`;
 }
 
 function viewStudy(d) {
@@ -185,13 +201,13 @@ function viewStudy(d) {
     ${st.undo ? `<button class="btn plain" data-act="undo" title="Ctrl+Z">${icon('undo')}Отменить</button>` : ''}</div>`;
   if (!card) {
     const next = d.cards.filter(x => x.state !== 'new').map(x => x.due);
-    const wait = next.length ? Math.min(...next) - Date.now() : 0;
+    const wait = next.length ? next.reduce((a, b) => Math.min(a, b), Infinity) - Date.now() : 0;
     return top + `<section class="done"><h2>${st.count ? 'На сегодня всё' : 'Сейчас повторять нечего'}</h2>
       <p>${st.count ? `Пройдено: ${plural(st.count, CARDS)}. ` : ''}${wait > 0 ? 'Следующая появится через ' + dur(wait) + '.' : ''}</p>
       <div class="row"><button class="btn" data-act="end">К колоде</button>${d.cards.length ? '<button class="btn main" data-act="cram">Повторить всё ещё раз</button>' : ''}</div></section>`;
   }
   return top + `<div class="flashcard ${st.flipped ? 'open' : ''}">
-      <button class="btn icon edit" data-act="edit" data-id="${card.id}" title="Изменить карточку">${icon('pen')}</button>
+      <button class="btn icon edit" data-act="edit" data-id="${esc(card.id)}" title="Изменить карточку">${icon('pen')}</button>
       <div class="q">${br(card.front)}</div>
       ${st.flipped ? `<div class="a">${br(card.back) || '<span class="soft">Ответ не заполнен</span>'}</div>` : ''}
     </div>
@@ -218,7 +234,10 @@ function pick() { const c = nextCard(deck()); Object.assign(S.study, { cardId: c
 function flip() { S.study.flipped = true; render(); }
 const refreshBar = () => ($('#answer').innerHTML = answerBar(deck().cards.find(c => c.id === S.study.cardId)));
 function answer(fn) {
-  const d = deck(), st = S.study, i = d.cards.findIndex(c => c.id === st.cardId), prev = d.cards[i];
+  const d = deck(), st = S.study;
+  if (!st?.flipped) return;
+  const i = d.cards.findIndex(c => c.id === st.cardId), prev = d.cards[i];
+  if (!prev) return;
   st.undo = { card: prev, newLog: d.newLog, count: st.count };
   if (prev.state === 'new' && !st.cram) d.newLog = { date: today(), count: (d.newLog?.date === today() ? d.newLog.count : 0) + 1 };
   d.cards[i] = fn(prev); st.seen.add(prev.id); st.count++;
@@ -244,6 +263,8 @@ function cardBox(id) {
     const ok = more => {
       const front = $('#fr', m).value.trim(), back = $('#bk', m).value.trim(), freq = +$('#fq', m).value;
       if (!front) { $('#fr', m).focus(); return toast('Напишите вопрос'); }
+      if (!c && Object.values(S.decks).reduce((n, d) => n + d.cards.length, 0) >= Model.MAX_CARDS) return toast('Лимит коллекции — 100 000 карточек');
+      try { Model.card({ front, back, freq }); } catch (e) { return toast(e.message); }
       c ? Object.assign(c, { front, back, freq }) : d.cards.push(makeCard(front, back, freq));
       save(); render();
       if (more) { $('#fr', m).value = $('#bk', m).value = ''; $('#fr', m).focus(); toast('Карточка добавлена'); } else close();
@@ -260,7 +281,9 @@ function settingsBox() {
     <p class="soft" style="margin-top:18px;font-size:14px">Частота карточки растягивает или сжимает её интервалы: «часто» — вдвое короче, «редко» — вдвое длиннее.</p>
     <p class="soft" style="font-size:14px">Чтобы не потерять колоды или перенести их на другое устройство, делайте экспорт.</p>
     <div class="actions"><button class="btn main" id="ok">Сохранить</button></div>`, m => ($('#ok', m).onclick = () => {
-    S.settings.newPerDay = Math.max(0, parseInt($('#np', m).value) || 0); save(); close(); render(); toast('Настройки сохранены');
+    const n = Number($('#np', m).value);
+    if (!Number.isInteger(n) || n < 0 || n > 100000) return toast('Введите целое число от 0 до 100 000');
+    S.settings.newPerDay = n; save(); close(); render(); toast('Настройки сохранены');
   }));
 }
 
@@ -281,18 +304,29 @@ function split(line, sep) {
 const SEPS = { '\t': 'табуляция', ';': 'точка с запятой', '|': 'вертикальная черта', ' — ': 'тире', ' - ': 'дефис', ': ': 'двоеточие', ',': 'запятая' };
 function parse(text, sep, skipHead) {
   text = text.replace(/^﻿/, '').trim();
-  if (/^[[{]/.test(text)) try {
+  if (new TextEncoder().encode(text).length > Model.MAX_BYTES) throw Error('Размер файла превышает 32 МБ');
+  if (/^[[{]/.test(text)) {
     const o = JSON.parse(text);
-    if (Array.isArray(o.decks)) return { decks: o.decks.filter(d => Array.isArray(d.cards)) };
-    const a = Array.isArray(o) ? o : o.cards || [];
-    return { cards: a.map(x => Array.isArray(x) ? { front: x[0], back: x[1] } : { front: x.front ?? x.question, back: x.back ?? x.answer })
-      .map(x => ({ front: String(x.front ?? '').trim(), back: String(x.back ?? '').trim() })).filter(x => x.front) };
-  } catch {}
-  let lines = text.split(/\r?\n/).filter(l => l.trim() && !l.startsWith('#'));
-  if (skipHead) lines = lines.slice(1);
+    if (o && !Array.isArray(o) && Object.prototype.hasOwnProperty.call(o, 'decks')) {
+      const data = Model.collection(o, true);
+      return { decks: Object.values(data.decks) };
+    }
+    const a = Array.isArray(o) ? o : o?.cards;
+    if (!Array.isArray(a)) throw Error('В JSON отсутствуют карточки');
+    if (a.length > Model.MAX_CARDS) throw Error('Слишком много карточек');
+    return { cards: a.map(x => {
+      if (!x || typeof x !== 'object') throw Error('Некорректная карточка');
+      return Model.card(Array.isArray(x) ? { front: x[0], back: x[1] } : { front: x.front ?? x.question, back: x.back ?? x.answer });
+    }) };
+  }
+  const lines = text.split(/\r?\n/).filter(l => l.trim() && !l.startsWith('#'));
   if (sep === 'auto') sep = Object.keys(SEPS).find(s => lines.slice(0, 30).filter(l => l.includes(s)).length >= Math.ceil(Math.min(30, lines.length) * 0.6)) || '\t';
-  const cards = lines.map(l => split(l, sep).map(x => unhtml(x.replace(/\\n/g, '\n'))))
+  let rows = Model.records(text, sep);
+  if (skipHead) rows = rows.slice(1);
+  if (rows.length > Model.MAX_CARDS) throw Error('Слишком много карточек');
+  const cards = rows.map(row => row.map(x => unhtml(x.replace(/\\n/g, '\n'))))
     .map(([f, ...b]) => ({ front: (f || '').trim(), back: b.map(x => x.trim()).filter(Boolean).join('\n') })).filter(c => c.front);
+  cards.forEach(c => Model.card(c));
   return { cards, sep };
 }
 function importBox(targetId) {
@@ -311,12 +345,14 @@ function importBox(targetId) {
     const el = s => $(s, m);
     const update = () => {
       const src = el('#tx').value || text;
-      parsed = parse(src, el('#sp').value, el('#hd').checked);
+      try { parsed = parse(src, el('#sp').value, el('#hd').checked); }
+      catch (e) { parsed = null; el('#ok').disabled = true; el('#pv').textContent = 'Не удалось загрузить: ' + e.message; return; }
       el('#nmw').hidden = !!el('#tg').value || !!parsed.decks;
       if (parsed.decks) {
         const n = parsed.decks.reduce((s, d) => s + d.cards.length, 0);
         el('#pv').innerHTML = `<p style="margin-top:14px">Это резервная копия: ${plural(parsed.decks.length, ['колода', 'колоды', 'колод'])}, ${plural(n, CARDS)}. Прогресс сохранится.</p>`;
-        return (el('#ok').disabled = !n);
+        el('#ok').textContent = 'Загрузить копию';
+        return (el('#ok').disabled = !parsed.decks.length);
       }
       if (el('#sw').checked) parsed.cards = parsed.cards.map(c => ({ front: c.back, back: c.front })).filter(c => c.front);
       const cs = parsed.cards;
@@ -328,7 +364,9 @@ function importBox(targetId) {
     };
     const read = f => {
       if (!f) return;
+      if (f.size > Model.MAX_BYTES) return toast('Максимальный размер файла — 32 МБ');
       const r = new FileReader();
+      r.onerror = () => toast('Не удалось прочитать файл');
       r.onload = () => {
         text = String(r.result); el('#tx').value = text.length < 2e5 ? text : '';
         el('#drop').innerHTML = `<b>${esc(f.name)}</b>, выбрать другой`; el('#nm').value = f.name.replace(/\.[^.]+$/, ''); update();
@@ -344,13 +382,17 @@ function importBox(targetId) {
     el('#tx').oninput = () => { text = ''; update(); };
     ['#sp', '#tg', '#hd', '#sw'].forEach(s => (el(s).onchange = update));
     el('#ok').onclick = () => {
-      close();
+      if (!parsed) return;
+      const importedCount = parsed.decks ? parsed.decks.reduce((n, d) => n + d.cards.length, 0) : parsed.cards.length;
+      const total = Object.values(S.decks).reduce((n, d) => n + d.cards.length, 0);
+      if (total + importedCount > Model.MAX_CARDS) return toast('Лимит коллекции — 100 000 карточек');
       if (parsed.decks) {
-        parsed.decks.forEach(src => createDeck(String(src.name || 'Импорт'), src.cards.filter(c => c?.front)
-          .map(c => ({ ...makeCard(String(c.front), String(c.back ?? '')), ...c, id: uid('c'), freq: FREQS.some(f => f[0] === c.freq) ? c.freq : 1 }))));
+        for (const src of parsed.decks) S.decks[src.id] = src;
+        save(); close();
         toast('Загружено: ' + plural(parsed.decks.length, ['колода', 'колоды', 'колод'])); return go('home');
       }
       const d = S.decks[el('#tg').value] || createDeck(el('#nm').value.trim() || 'Моя колода');
+      close();
       const have = new Set(d.cards.map(c => c.front + '\u0001' + c.back));
       const add = parsed.cards.filter(c => !have.has(c.front + '\u0001' + c.back) && have.add(c.front + '\u0001' + c.back));
       const skipped = parsed.cards.length - add.length;
@@ -363,25 +405,25 @@ function importBox(targetId) {
 }
 
 /* ===== экспорт ===== */
-function exportBox() {
-  const d = deck(), name = d.name.replace(/[\\/:*?"<>|]+/g, '_') || 'deck';
+function exportBox(all = false) {
+  const d = all ? { name: 'Все колоды' } : deck(), name = d.name.replace(/[\\/:*?"<>|]+/g, '_') || 'deck';
   const download = (data, ext) => {
-    if (window.saveFile) return window.saveFile(name + ext, data).then(() => close(), () => toast('Скачивание отменено'));
+    if (window.saveFile) return window.saveFile(name + ext, data).then(() => close(), e => toast(e.message || 'Не удалось сохранить экспорт'));
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([data], { type: 'text/plain;charset=utf-8' })), download: name + ext });
-    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); close(); toast('Файл сохранён в «Загрузки»');
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); close(); toast('Экспорт передан в браузер');
   };
-  modal(`<h3>Экспорт колоды</h3>
+  modal(`<h3>${all ? 'Резервная копия всех колод' : 'Экспорт колоды'}</h3>
     <p class="soft" style="font-size:14px">Резервная копия хранит всё, включая прогресс и частоту карточек. Её можно загрузить обратно здесь же.</p>
     <p class="soft" style="font-size:14px">Текстовый файл содержит только вопросы и ответы. Он откроется в Excel и Anki.</p>
-    <div class="actions">${cancelBtn}<button class="btn" id="txt">Текстовый файл</button><button class="btn main" id="json">Резервная копия</button></div>`, m => {
-    $('#json', m).onclick = () => download(JSON.stringify({ app: 'kartochki', version: 1, decks: [{ name: d.name, cards: d.cards.map(({ id, ...c }) => c) }] }), '.json');
-    $('#txt', m).onclick = () => download(d.cards.map(c => [c.front, c.back].map(x => x.replace(/\t/g, ' ').replace(/\n/g, '<br>')).join('\t')).join('\n'), '.txt');
+    <div class="actions">${cancelBtn}${all ? '' : '<button class="btn" id="txt">Текстовый файл</button>'}<button class="btn main" id="json">Резервная копия</button></div>`, m => {
+    $('#json', m).onclick = () => download(all ? snapshot() : JSON.stringify({ app: 'kartochki', version: 1, decks: [{ name: d.name, created: d.created, newLog: d.newLog, cards: d.cards.map(({ id, ...c }) => c) }] }), '.json');
+    if (!all) $('#txt', m).onclick = () => download(d.cards.map(c => [c.front, c.back].map(x => x.replace(/\t/g, ' ').replace(/\n/g, '<br>')).join('\t')).join('\n'), '.txt');
   });
 }
 
 /* ===== события ===== */
 const ACTIONS = {
-  home: () => go('home'),
+  home: () => { S.search = ''; go('home'); },
   theme: () => { S.settings.theme = S.settings.theme === 'dark' ? 'light' : 'dark'; applyTheme(); save(); },
   settings: settingsBox, close,
   'new-deck': () => nameBox('Новая колода', '', 'Создать', v => { S.search = ''; go('deck', createDeck(v).id); }),
@@ -396,12 +438,14 @@ const ACTIONS = {
   edit: el => cardBox(el.dataset.id),
   'del-card': el => ask('Удалить карточку?', deck().cards.find(x => x.id === el.dataset.id).front.slice(0, 140), 'Удалить', () => { deck().cards = deck().cards.filter(x => x.id !== el.dataset.id); save(); render(); toast('Карточка удалена'); }),
   import: el => importBox(el.dataset.id),
-  export: exportBox,
+  export: () => exportBox(),
+  'backup-all': () => exportBox(true),
+  'more-cards': () => { S.visibleCards = (S.visibleCards || 300) + 300; render(); },
   flip,
   grade: el => answer(c => schedule(c, el.dataset.g)),
   fixed: el => {
     const ms = el.dataset.ms ? +el.dataset.ms : parseFloat($('#cNum').value) * +$('#cUnit').value;
-    ms > 0 ? answer(c => scheduleFixed(c, ms)) : toast('Укажите число больше нуля');
+    Number.isFinite(ms) && ms > 0 && ms <= 36500 * DAY ? answer(c => scheduleFixed(c, ms)) : toast('Укажите срок от минуты до 100 лет');
   },
   custom: () => { S.study.custom = !S.study.custom; refreshBar(); },
   freq: el => { const c = deck().cards.find(x => x.id === S.study.cardId); c.freq = +el.dataset.v; save(); refreshBar(); toast('Теперь показывать ' + freqName(c.freq)); },
@@ -412,9 +456,19 @@ document.addEventListener('click', e => {
   if (el.dataset.act === 'overlay') return e.target === el && close();
   e.stopPropagation(); ACTIONS[el.dataset.act]?.(el);
 });
-document.addEventListener('input', e => { if (e.target.id === 'search') { S.search = e.target.value; S.keepFocus = true; render(); } });
+document.addEventListener('input', e => { if (e.target.id === 'search') { S.search = e.target.value; S.visibleCards = 300; S.keepFocus = true; render(); } });
 document.addEventListener('keydown', e => {
-  if (isModal()) return e.key === 'Escape' && close();
+  if (isModal()) {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    if (e.key === 'Tab') {
+      const nodes = [...document.querySelectorAll('#modal button, #modal input, #modal textarea, #modal select')].filter(x => !x.disabled && x.getClientRects().length);
+      const first = nodes[0], last = nodes[nodes.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    }
+    return;
+  }
+  if (e.repeat || /BUTTON|A/.test(e.target.tagName)) return;
   if (S.view !== 'study' || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') return e.preventDefault(), undo();
   if (!S.study.cardId) return;
@@ -428,5 +482,5 @@ setInterval(() => { // карточки в изучении «созревают
   render();
 }, 60000);
 
-if (!localStorage.getItem(KEY) && matchMedia('(prefers-color-scheme: dark)').matches) S.settings.theme = 'dark';
+try { if (!localStorage.getItem(KEY) && matchMedia('(prefers-color-scheme: dark)').matches) S.settings.theme = 'dark'; } catch {}
 applyTheme(); render();

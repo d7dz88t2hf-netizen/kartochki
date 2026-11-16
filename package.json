@@ -1,0 +1,10 @@
+{
+  "name": "kartochki-desktop",
+  "version": "1.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/model.test.cjs",
+    "test:browser": "BROWSER_TESTS=1 go test ./windows -run TestBrowser -v -count=1"
+  },
+  "devDependencies": { "playwright": "1.62.1" }
+}

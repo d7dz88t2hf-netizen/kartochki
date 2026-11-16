@@ -10,19 +10,23 @@
 		</data>
 		<key>Resources/web/app.js</key>
 		<data>
-		qOduaT9E6KCNavIB0XqDRjYXimI=
+		wObRFKAgaDsjw30KyM8nB60/eRQ=
+		</data>
+		<key>Resources/web/desktop.js</key>
+		<data>
+		Drz0h1Z8G8OE5j/rc9f74SjG1dw=
 		</data>
 		<key>Resources/web/index.html</key>
 		<data>
-		33LXH4sL9nEH5s7/JRbgLTvGXTQ=
+		3HDAOq+AKaOpts72fmF/X9U4fcQ=
 		</data>
-		<key>Resources/web/mac.js</key>
+		<key>Resources/web/model.js</key>
 		<data>
-		WNj+M7QPJ18r9MnkU0WGfqJ0H3U=
+		n1vEapidp1Fe5mYtfPUqH1PS/6U=
 		</data>
 		<key>Resources/web/style.css</key>
 		<data>
-		InFI7akChi/r4XZYuROeWgMuCxM=
+		oaHcK4Fixhk8kb9ImaYf73pVJAQ=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -38,28 +42,35 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			HFxiH1UEqQr8n4gZrb311Pfv2z0TZFiow7jjinFyc8E=
+			GXeC1//qzQyWPlloF12+DXV14NjfdPVdOeFwG9hN43I=
+			</data>
+		</dict>
+		<key>Resources/web/desktop.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			CPH9ZPAGf0ZZAIKYioaArUz6hJ/IWsEWE6bxFv+lZj4=
 			</data>
 		</dict>
 		<key>Resources/web/index.html</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			/mdhlQzjtD1xdcY8DO8WXeJMVm/d1BQkaRoH/Ur0Uqg=
+			iFzCyHvM9RHzGGYQmb3NzHuHzbPYcFrZ5U7BxQh0E4I=
 			</data>
 		</dict>
-		<key>Resources/web/mac.js</key>
+		<key>Resources/web/model.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			HTaD5uyoATYyz90brVnpk/096zXPZxgoRfOeXsNT8Kk=
+			NELaMqFRCrPXCOau40sgCBjc9qTordxH6Q2tF+/q6ZA=
 			</data>
 		</dict>
 		<key>Resources/web/style.css</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			WtIttVxp3hnZEGNLvht7TemlAqtSebBU5GbWh5gOBC4=
+			2mtQHwSIZMJzfEl1a8Z6gGKtboUOZDz2bMlxLgaMCsg=
 			</data>
 		</dict>
 	</dict>

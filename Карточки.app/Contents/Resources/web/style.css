@@ -149,3 +149,20 @@ kbd{font:12px "Golos Text",sans-serif;border:1px solid var(--line);border-bottom
   .grade:nth-child(n+3){border-top:1px solid var(--line)}
 }
 @media (hover:none){.keys{display:none}}
+
+/* Desktop usability and accessible keyboard navigation. */
+.app-footer{max-width:780px;margin:0 auto 24px;padding:20px;border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center;color:var(--soft);font-size:13px}
+.app-footer .link:last-child{margin-left:auto}
+.save-error{color:var(--again);font-weight:600}
+.deck-open{font:inherit;text-align:left;flex:1;min-width:0;color:inherit;border:0;background:none;padding:0;cursor:pointer}
+.deck-open h3{margin-bottom:8px}.deck-open span{font-size:14px;color:var(--soft)}
+:focus-visible{outline:3px solid var(--accent-2);outline-offset:4px}
+.startup-cover{position:fixed;inset:0;z-index:10000;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:32px}
+.startup-cover section{max-width:620px}.startup-cover p{overflow-wrap:anywhere}
+@media(max-width:600px){.app-footer{padding:16px}.app-footer .link:last-child{margin-left:0}.deck{gap:12px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.collection-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 28px}
+.collection-stats>div{display:flex;align-items:baseline;gap:12px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+.collection-stats strong{font-size:28px;line-height:1.2;font-variant-numeric:tabular-nums}.collection-stats span{font-size:13px;color:var(--soft)}
+@media(max-width:600px){.collection-stats{gap:8px}.collection-stats>div{padding:12px;display:block}.collection-stats strong,.collection-stats span{display:block}.collection-stats strong{font-size:24px}}
+.logo-home{border:0;padding:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
